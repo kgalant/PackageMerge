@@ -7,6 +7,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.TreeSet;
 
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -25,7 +26,11 @@ import org.w3c.dom.Node;
 import org.w3c.dom.Element;
 import org.xml.sax.SAXException;
 
+import org.apache.commons.io.FileUtils;
+import org.apache.commons.io.filefilter.TrueFileFilter;
+
 import com.salesforce.migrationtoolutils.Utils;
+
 
 public class PackageMerge {
 	
@@ -50,7 +55,7 @@ public class PackageMerge {
 		String targetFilename = args[0];
 		String firstFilename = args[1];
 		String targetDirPath = Utils.checkPathSlash(workingDirPath) + targetDirName;
-		String tempDirPath = Utils.checkPathSlash(workingDirPath) + "temp";
+		String tempDirPath = Utils.checkPathSlash(workingDirPath) + "temp"; 
 		
 		try {
 			
@@ -62,12 +67,16 @@ public class PackageMerge {
 			
 			Utils.checkDir(targetDirPath);
 			
-			// unzip first file into target dir
 			
-			// TODO: check if file exists
 			
-			Utils.unzip(firstFilename, targetDirPath);
-			
+			if (Utils.checkIfFileExists(firstFilename) && !Utils.checkIsDirectory(firstFilename)) {
+				// unzip first file into target dir - if it's a file
+				Utils.unzip(firstFilename, targetDirPath);
+			} else {
+				// just copy it
+				Utils.copyDirContent(firstFilename, targetDirPath);
+			}
+
 			// for each file
 			
 			for (int i = 2; i < args.length; i++) {
@@ -78,7 +87,13 @@ public class PackageMerge {
 				
 				// unzip into temp dir
 				
-				Utils.unzip(args[i], tempDirPath);
+				if (Utils.checkIfFileExists(args[i]) && !Utils.checkIsDirectory(args[i])) {
+					// unzip file into target dir - if it's a file
+					Utils.unzip(args[i], tempDirPath);
+				} else {
+					// just copy it
+					Utils.copyDirContent(args[i], tempDirPath);
+				}
 				
 				// get package.xml from current target & temp dir
 				
@@ -88,12 +103,23 @@ public class PackageMerge {
 				// merge package.xmls
 				// this leaves the target package.xml as the sum total of the two, so the merged package.xml is safe to remove
 				
+				ArrayList<String> collisionList = checkFileCollisions(targetDirPath, tempDirPath);
+				
+				if (!collisionList.isEmpty()) {
+					System.out.println("Package " + args[i] + " cannot be merged on top of what is already done, there are file-level collisions:");
+					for (String s : collisionList) {
+						System.out.println(s);
+					}
+					System.exit(-1);
+				}
+				
 				mergePackageXMLs(targetPackageXMLPath, toBeMergedPackageXMLPath);
 				new File(toBeMergedPackageXMLPath).delete();
 				
 				// merge file content into target dir
 			
 				Utils.mergeTwoDirectories(new File(targetDirPath), new File(tempDirPath));
+				System.out.println("Merged package: " + args[i]);
 			}
 			
 			// zip up the target dir
@@ -122,6 +148,31 @@ public class PackageMerge {
 		
 	}
 
+	private static ArrayList<String> checkFileCollisions(String targetPackagePath, String toBeMergedPackagePath) {
+		ArrayList<String> collisionList = new ArrayList<String>();
+		Iterator<File> filesIterator = FileUtils.iterateFiles(new File(toBeMergedPackagePath), TrueFileFilter.INSTANCE, TrueFileFilter.INSTANCE);
+		
+		
+		String currentDir = "";
+		while (filesIterator.hasNext()) {
+			File toBeMergedFile = filesIterator.next();
+			String actualFilePath = toBeMergedFile.getPath().replace(toBeMergedPackagePath, "");
+			if (toBeMergedFile.getName().startsWith(".") || toBeMergedFile.getName().equals("package.xml")) {
+				continue;
+			}
+			if (toBeMergedFile.isDirectory()) {
+				currentDir = toBeMergedFile.getAbsolutePath().replace(toBeMergedPackagePath, "");
+			} else {
+				if (Utils.checkIfFileExists(targetPackagePath + actualFilePath)) {
+					collisionList.add(currentDir + toBeMergedFile.getName());
+				}
+			}
+			
+		}
+		
+		return collisionList;
+	}
+
 	public static void mergePackageXMLs(String targetPackageXMLPath, String toBeMergedPackageXMLPath) throws IOException, ParserConfigurationException, SAXException, TransformerException {
 
 		
@@ -132,7 +183,7 @@ public class PackageMerge {
 		ArrayList<HashMap<String, HashSet<String>>> maps = new ArrayList<HashMap<String, HashSet<String>>>();
 		Document doc1 = null;
 		boolean firstPass = true;
-		for (String fileName : new String[]{targetPackageXMLPath, toBeMergedPackageXMLPath}) { // skipping args[0] since that's the output file name
+		for (String fileName : new String[]{targetPackageXMLPath, toBeMergedPackageXMLPath}) {
 			File fileToParse = new File(fileName);
 			
 			if (fileToParse != null && fileToParse.exists()) {
@@ -218,7 +269,7 @@ public class PackageMerge {
 			Element mdTypeElement = (Element) typesList.item(i);
 			String mdTypeName = mdTypeElement.getElementsByTagName("name").item(0).getTextContent();
 
-			System.out.println("Processing metadata type: " + mdTypeName);
+			//System.out.println("Processing metadata type: " + mdTypeName);
 
 			HashSet<String> itemSet = null;
 
@@ -236,7 +287,7 @@ public class PackageMerge {
 			for (int j = 0; j < memberList.getLength(); j++) {
 				Element memberElement = (Element) memberList.item(j);
 				itemSet.add(memberElement.getTextContent());
-				System.out.println("Found item: " + memberElement.getTextContent());
+				//System.out.println("Found item: " + memberElement.getTextContent());
 			}
 		}
 
